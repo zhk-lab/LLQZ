@@ -2,10 +2,12 @@ import argparse
 import json
 import os
 import re
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from openai import OpenAIError
 from tqdm import tqdm
 
 
@@ -69,8 +71,11 @@ def main() -> None:
     ap.add_argument("--m", type=int, default=10, help="Samples per question.")
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top_p", type=float, default=0.95)
+    ap.add_argument("--max_tokens", type=int, default=220)
     ap.add_argument("--max_context_chars", type=int, default=12000, help="Truncate concatenated contexts.")
     ap.add_argument("--max_items", type=int, default=0, help="Debug: limit number of questions (0=all).")
+    ap.add_argument("--request_timeout", type=float, default=120.0)
+    ap.add_argument("--max_retries", type=int, default=3)
     ap.add_argument(
         "--base_url",
         default=os.environ.get("OPENAI_BASE_URL", "").strip(),
@@ -104,18 +109,31 @@ def main() -> None:
             prompt = _build_prompt(question, [ctx])
 
             for sample_id in range(args.m):
-                resp = client.chat.completions.create(
-                    model=args.model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "Follow the user's requested output format exactly.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                )
+                last_err = None
+                resp = None
+                for attempt in range(args.max_retries):
+                    try:
+                        resp = client.chat.completions.create(
+                            model=args.model,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": "Follow the user's requested output format exactly.",
+                                },
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=args.temperature,
+                            top_p=args.top_p,
+                            max_tokens=args.max_tokens,
+                            timeout=args.request_timeout,
+                        )
+                        break
+                    except OpenAIError as e:
+                        last_err = e
+                        if attempt < args.max_retries - 1:
+                            time.sleep(1.5 * (attempt + 1))
+                if resp is None:
+                    raise RuntimeError(f"Failed to sample question_id={qid}, sample_id={sample_id}: {last_err}")
 
                 content = (resp.choices[0].message.content or "").strip()
                 rationale_text, final_label = _parse_answer_and_final(content)
