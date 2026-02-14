@@ -1,0 +1,13 @@
+{
+  "num_questions": 1000,
+  "sim_threshold": 0.62,
+  "require_same_label": true,
+  "pearson": {
+    "r": 0.06615254108480569,
+    "p_value": 0.036474130880040395
+  },
+  "spearman": {
+    "rho": 0.06383211514066416,
+    "p_value": 0.04358268159446944
+  }
+}

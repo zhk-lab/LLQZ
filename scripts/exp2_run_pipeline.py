@@ -23,6 +23,19 @@ def main() -> None:
     parser.add_argument("--m", type=int, default=10)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.95)
+    parser.add_argument("--max_tokens", type=int, default=140)
+    parser.add_argument("--max_context_chars", type=int, default=2500)
+    parser.add_argument(
+        "--context_trim_mode",
+        choices=["head", "head_tail"],
+        default="head_tail",
+    )
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--request_timeout", type=float, default=120.0)
+    parser.add_argument("--max_retries", type=int, default=3)
+    parser.add_argument("--concise_mode", action="store_true")
+    parser.add_argument("--append_no_think", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max_items", type=int, default=0)
     parser.add_argument("--sim_threshold", type=float, default=0.62)
     parser.add_argument("--require_same_label", action="store_true")
@@ -59,7 +72,25 @@ def main() -> None:
         str(args.temperature),
         "--top_p",
         str(args.top_p),
+        "--max_tokens",
+        str(args.max_tokens),
+        "--max_context_chars",
+        str(args.max_context_chars),
+        "--context_trim_mode",
+        args.context_trim_mode,
+        "--workers",
+        str(args.workers),
+        "--request_timeout",
+        str(args.request_timeout),
+        "--max_retries",
+        str(args.max_retries),
     ]
+    if args.concise_mode:
+        sample_cmd.append("--concise_mode")
+    if args.append_no_think:
+        sample_cmd.append("--append_no_think")
+    if args.resume:
+        sample_cmd.append("--resume")
     if args.max_items > 0:
         sample_cmd.extend(["--max_items", str(args.max_items)])
     run_step(sample_cmd, env)
