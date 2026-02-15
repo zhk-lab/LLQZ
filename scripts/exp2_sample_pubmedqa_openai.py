@@ -48,7 +48,12 @@ def _build_prompt(question: str, contexts: list[str], concise_mode: bool, append
     no_think_hint = "\n/no_think" if append_no_think else ""
     return (
         "You are answering a biomedical yes/no/maybe question.\n"
-        "Use ONLY the provided context to decide. If the context is insufficient or ambiguous, answer maybe.\n\n"
+        "Use ONLY the provided context to decide.\n"
+        "Label policy:\n"
+        "- Choose yes when evidence clearly supports the question.\n"
+        "- Choose no when evidence clearly refutes the question.\n"
+        "- Choose maybe ONLY when evidence is genuinely insufficient or conflicting after careful reading.\n"
+        "- Do NOT default to maybe just because there is uncertainty.\n\n"
         "Output format (STRICT):\n"
         f"{answer_rule}"
         "Final: yes|no|maybe\n\n"

@@ -1,0 +1,53 @@
+{
+  "num_questions": 1000,
+  "semantic_backend": "nli_llm",
+  "sim_threshold_tfidf": 0.62,
+  "require_same_label": true,
+  "prediction_mode": "maybe_debiased",
+  "plot_error_metric": "ordinal",
+  "pearson_plot": {
+    "r": 0.1310167346170916,
+    "p_value": 3.2407063202687844e-05
+  },
+  "spearman_plot": {
+    "rho": 0.17260662547971245,
+    "p_value": 3.957224914847684e-08
+  },
+  "pearson_binary": {
+    "r": 0.1425805475607811,
+    "p_value": 6.002608533734101e-06
+  },
+  "spearman_binary": {
+    "rho": 0.17718143477455034,
+    "p_value": 1.6941256143698142e-08
+  },
+  "pearson_ordinal": {
+    "r": 0.1310167346170916,
+    "p_value": 3.2407063202687844e-05
+  },
+  "spearman_ordinal": {
+    "rho": 0.17260662547971245,
+    "p_value": 3.957224914847684e-08
+  },
+  "maybe_rate_raw_majority": 0.613,
+  "maybe_rate_final_pred": 0.612,
+  "pred_distribution_raw_majority": {
+    "maybe": 613,
+    "yes": 348,
+    "no": 39
+  },
+  "pred_distribution_final": {
+    "maybe": 612,
+    "yes": 348,
+    "no": 40
+  },
+  "mean_error_binary": 0.59,
+  "mean_error_ordinal": 0.308,
+  "maybe_overuse_rate": 0.533,
+  "nli_cache": {
+    "path": "runs/exp2/nli_cache.json",
+    "cache_hit": 3179,
+    "cache_miss": 20666,
+    "cache_size": 20666
+  }
+}

@@ -9,6 +9,15 @@ def run_step(cmd: list[str], env: dict[str, str]) -> None:
     subprocess.run(cmd, check=True, env=env)
 
 
+def with_run_tag(path: str, run_tag: str) -> str:
+    if not run_tag:
+        return path
+    root, ext = os.path.splitext(path)
+    if ext:
+        return f"{root}_{run_tag}{ext}"
+    return f"{path}_{run_tag}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Experiment 2 pipeline end-to-end.")
     parser.add_argument("--input", default="data/pubmedqa/ori_pqal.json")
@@ -19,6 +28,11 @@ def main() -> None:
     parser.add_argument("--correlation_out", default="runs/exp2/correlation.json")
     parser.add_argument("--scatter_out", default="plots/exp2_entropy_scatter.png")
     parser.add_argument("--bucket_out", default="plots/exp2_entropy_bucket_bar.png")
+    parser.add_argument(
+        "--run_tag",
+        default="",
+        help="Optional output suffix (e.g., v2). Writes samples_v2/clusters_v2/... without overwriting existing results.",
+    )
     parser.add_argument("--model", required=True, help="LLM model name for sampling stage.")
     parser.add_argument("--m", type=int, default=10)
     parser.add_argument("--temperature", type=float, default=0.7)
@@ -39,11 +53,41 @@ def main() -> None:
     parser.add_argument("--max_items", type=int, default=0)
     parser.add_argument("--sim_threshold", type=float, default=0.62)
     parser.add_argument("--require_same_label", action="store_true")
+    parser.add_argument(
+        "--semantic_backend",
+        choices=["nli_llm", "tfidf"],
+        default="nli_llm",
+    )
+    parser.add_argument(
+        "--prediction_mode",
+        choices=["majority_vote", "maybe_debiased"],
+        default="maybe_debiased",
+    )
+    parser.add_argument(
+        "--plot_error_metric",
+        choices=["binary", "ordinal"],
+        default="ordinal",
+    )
+    parser.add_argument("--nli_model", default="")
+    parser.add_argument("--nli_base_url", default="")
+    parser.add_argument("--nli_timeout", type=float, default=90.0)
+    parser.add_argument("--nli_retries", type=int, default=3)
+    parser.add_argument("--nli_workers", type=int, default=4)
+    parser.add_argument("--nli_cache", default="runs/exp2/nli_cache.json")
+    parser.add_argument("--maybe_margin_max", type=int, default=1)
+    parser.add_argument("--maybe_alt_min_count", type=int, default=3)
     args = parser.parse_args()
 
     env = os.environ.copy()
     if not env.get("OPENAI_API_KEY"):
         raise RuntimeError("Missing OPENAI_API_KEY. Set it before running this pipeline.")
+
+    samples_out = with_run_tag(args.samples_out, args.run_tag)
+    clusters_out = with_run_tag(args.clusters_out, args.run_tag)
+    entropy_out = with_run_tag(args.entropy_out, args.run_tag)
+    correlation_out = with_run_tag(args.correlation_out, args.run_tag)
+    scatter_out = with_run_tag(args.scatter_out, args.run_tag)
+    bucket_out = with_run_tag(args.bucket_out, args.run_tag)
 
     run_step(
         [
@@ -63,7 +107,7 @@ def main() -> None:
         "--input",
         args.input,
         "--out",
-        args.samples_out,
+        samples_out,
         "--model",
         args.model,
         "--m",
@@ -99,20 +143,42 @@ def main() -> None:
         sys.executable,
         "scripts/exp2_analyze_semantic_entropy.py",
         "--samples",
-        args.samples_out,
+        samples_out,
         "--clusters_out",
-        args.clusters_out,
+        clusters_out,
         "--entropy_out",
-        args.entropy_out,
+        entropy_out,
         "--correlation_out",
-        args.correlation_out,
+        correlation_out,
         "--scatter_plot_out",
-        args.scatter_out,
+        scatter_out,
         "--bucket_plot_out",
-        args.bucket_out,
+        bucket_out,
         "--sim_threshold",
         str(args.sim_threshold),
+        "--semantic_backend",
+        args.semantic_backend,
+        "--prediction_mode",
+        args.prediction_mode,
+        "--plot_error_metric",
+        args.plot_error_metric,
+        "--nli_timeout",
+        str(args.nli_timeout),
+        "--nli_retries",
+        str(args.nli_retries),
+        "--workers",
+        str(args.nli_workers),
+        "--nli_cache",
+        args.nli_cache,
+        "--maybe_margin_max",
+        str(args.maybe_margin_max),
+        "--maybe_alt_min_count",
+        str(args.maybe_alt_min_count),
     ]
+    if args.nli_model:
+        analyze_cmd.extend(["--nli_model", args.nli_model])
+    if args.nli_base_url:
+        analyze_cmd.extend(["--nli_base_url", args.nli_base_url])
     if args.require_same_label:
         analyze_cmd.append("--require_same_label")
     run_step(analyze_cmd, env)
