@@ -1,0 +1,38 @@
+{
+  "naive_rag": {
+    "metrics": {
+      "factscore_proxy_f1": 0.20258539612307117,
+      "citation_precision": 0.8314606741573034,
+      "abstention_rate": 0.005,
+      "correct_rate": 0.48
+    }
+  },
+  "self_rag_wo_weight": {
+    "metrics": {
+      "factscore_proxy_f1": 0.19889454726478253,
+      "citation_precision": 0.773989898989899,
+      "abstention_rate": 0.0,
+      "correct_rate": 0.475
+    }
+  },
+  "self_rag_full": {
+    "metrics": {
+      "factscore_proxy_f1": 0.20763675299445286,
+      "citation_precision": 0.851111111111111,
+      "abstention_rate": 0.005,
+      "correct_rate": 0.475
+    }
+  },
+  "comparison": {
+    "wo_weight_vs_naive": {
+      "fix_rate": 0.04807692307692308,
+      "introduce_rate": 0.0625,
+      "delta_correct_rate": -0.0050000000000000044
+    },
+    "full_vs_naive": {
+      "fix_rate": 0.08653846153846154,
+      "introduce_rate": 0.10416666666666667,
+      "delta_correct_rate": -0.0050000000000000044
+    }
+  }
+}
