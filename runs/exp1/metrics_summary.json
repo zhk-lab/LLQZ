@@ -1,0 +1,66 @@
+{
+  "sparse_only": {
+    "retrieval": {
+      "recall_at_k": 0.5837188866493646,
+      "hit_at_k": 0.9191831035084657,
+      "mrr_at_k": 0.7688996716426078,
+      "ndcg_at_k": 0.8343094374827964
+    },
+    "answer": {
+      "token_f1": 0.18245803453250425,
+      "citation_doc_precision": 0.6817203009926353
+    },
+    "efficiency": {
+      "avg_latency_ms": 8109.197471460836,
+      "p95_latency_ms": 8880.782999983057
+    }
+  },
+  "dense_only": {
+    "retrieval": {
+      "recall_at_k": 0.6428423833678316,
+      "hit_at_k": 0.9467620876243672,
+      "mrr_at_k": 0.830922056460434,
+      "ndcg_at_k": 0.9284115248238266
+    },
+    "answer": {
+      "token_f1": 0.1897973342220302,
+      "citation_doc_precision": 0.7146162306544113
+    },
+    "efficiency": {
+      "avg_latency_ms": 7539.2243554195065,
+      "p95_latency_ms": 7868.117539968807
+    }
+  },
+  "hybrid": {
+    "retrieval": {
+      "recall_at_k": 0.6445494519560456,
+      "hit_at_k": 0.9518240530633618,
+      "mrr_at_k": 0.8268622161849251,
+      "ndcg_at_k": 0.9415931981549602
+    },
+    "answer": {
+      "token_f1": 0.18752494189837518,
+      "citation_doc_precision": 0.7282081938466444
+    },
+    "efficiency": {
+      "avg_latency_ms": 10616.22898004926,
+      "p95_latency_ms": 20095.721599925306
+    }
+  },
+  "hybrid_rerank": {
+    "retrieval": {
+      "recall_at_k": 0.6445494519560456,
+      "hit_at_k": 0.9518240530633618,
+      "mrr_at_k": 0.8823517005481546,
+      "ndcg_at_k": 0.9881081825903537
+    },
+    "answer": {
+      "token_f1": 0.19770743451372544,
+      "citation_doc_precision": 0.7702419288250351
+    },
+    "efficiency": {
+      "avg_latency_ms": 18602.758770553457,
+      "p95_latency_ms": 19353.9565000101
+    }
+  }
+}

@@ -3,6 +3,8 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import local
 from typing import Any
 
 from dotenv import load_dotenv
@@ -78,6 +80,8 @@ def call_chat(
 
 def parse_json_block(text: str) -> dict:
     text = str(text or "").strip()
+    if not text:
+        return {}
     try:
         return json.loads(text)
     except Exception:
@@ -85,8 +89,38 @@ def parse_json_block(text: str) -> dict:
         l = text.find("{")
         r = text.rfind("}")
         if l >= 0 and r > l:
-            return json.loads(text[l : r + 1])
-        raise
+            try:
+                return json.loads(text[l : r + 1])
+            except Exception:
+                return {}
+        return {}
+
+
+def parse_candidate(raw: str) -> tuple[str, float]:
+    obj = parse_json_block(raw)
+    answer = normalize_text(obj.get("answer", ""))
+    base_prob = clamp01(obj.get("base_confidence", 0.5))
+    if answer:
+        return answer, base_prob
+    # Fallback: some local models output plain text instead of strict JSON.
+    raw_txt = normalize_text(raw)
+    if raw_txt:
+        return raw_txt[:1200], 0.5
+    return "Insufficient evidence to provide a supported answer.", 0.3
+
+
+def parse_critic(raw: str) -> dict:
+    obj = parse_json_block(raw)
+    # Always return a valid critic object to keep pipeline running.
+    return {
+        "rel_label": str(obj.get("rel_label", "Irrel")),
+        "rel_prob": clamp01(obj.get("rel_prob", 0.5)),
+        "sup_label": str(obj.get("sup_label", "Partial")),
+        "sup_prob": clamp01(obj.get("sup_prob", 0.5)),
+        "use_score": clamp15(obj.get("use_score", 3)),
+        "use_prob": clamp01(obj.get("use_prob", 0.6)),
+        "notes": str(obj.get("notes", ""))[:300],
+    }
 
 
 def build_context_from_retrieved(retrieved_chunks: list[dict], top_n: int) -> str:
@@ -165,6 +199,8 @@ def score_candidate(base_prob: float, critic: dict, theta: float, w_rel: float, 
 def run_selfrag_variant(
     records: list[dict],
     client: OpenAI,
+    api_key: str,
+    base_url: str,
     model: str,
     top_n: int,
     num_candidates: int,
@@ -176,16 +212,28 @@ def run_selfrag_variant(
     max_tokens_answer: int,
     timeout: float,
     retries: int,
+    workers: int,
 ) -> list[dict]:
-    out = []
-    for r in tqdm(records, desc="exp3 self_rag"):
+    thread_local = local()
+
+    def get_client() -> OpenAI:
+        if workers <= 1:
+            return client
+        c = getattr(thread_local, "client", None)
+        if c is None:
+            c = OpenAI(api_key=api_key, base_url=base_url or None)
+            thread_local.client = c
+        return c
+
+    def process_one(r: dict) -> dict:
+        c = get_client()
         qid = r.get("question_id")
         question = r.get("question", "")
         context = build_context_from_retrieved(r.get("retrieved_chunks", []), top_n=top_n)
         cand_list = []
         for _ in range(num_candidates):
             raw = call_chat(
-                client,
+                c,
                 model,
                 "You produce strict JSON.",
                 build_candidate_prompt(question, context),
@@ -195,11 +243,9 @@ def run_selfrag_variant(
                 timeout=timeout,
                 retries=retries,
             )
-            obj = parse_json_block(raw)
-            answer = normalize_text(obj.get("answer", ""))
-            base_prob = clamp01(obj.get("base_confidence", 0.5))
+            answer, base_prob = parse_candidate(raw)
             critic_raw = call_chat(
-                client,
+                c,
                 model,
                 "You produce strict JSON only.",
                 build_critic_prompt(question, context, answer),
@@ -209,7 +255,7 @@ def run_selfrag_variant(
                 timeout=timeout,
                 retries=retries,
             )
-            critic = parse_json_block(critic_raw)
+            critic = parse_critic(critic_raw)
 
             score = score_candidate(
                 base_prob=base_prob,
@@ -223,44 +269,67 @@ def run_selfrag_variant(
                 {
                     "answer": answer,
                     "base_prob": base_prob,
-                    "critic": {
-                        "rel_label": str(critic.get("rel_label", "Irrel")),
-                        "rel_prob": clamp01(critic.get("rel_prob", 0.5)),
-                        "sup_label": str(critic.get("sup_label", "Partial")),
-                        "sup_prob": clamp01(critic.get("sup_prob", 0.5)),
-                        "use_score": clamp15(critic.get("use_score", 3)),
-                        "use_prob": clamp01(critic.get("use_prob", 0.6)),
-                        "notes": str(critic.get("notes", ""))[:300],
-                    },
+                    "critic": critic,
                     "score": score,
                 }
             )
 
         best = sorted(cand_list, key=lambda x: -x["score"])[0]
-        out.append(
-            {
-                "question_id": qid,
-                "question": question,
-                "retrieved_chunks": (r.get("retrieved_chunks", [])[:top_n]),
-                "context": context,
-                "answer": best["answer"],
-                "citations": extract_citations(best["answer"]),
-                "candidates": cand_list,
-                "selected_score": best["score"],
-                "gold_docs": r.get("gold_docs", []),
-                "ideal_answer": r.get("ideal_answer", ""),
-            }
-        )
+        return {
+            "question_id": qid,
+            "question": question,
+            "retrieved_chunks": (r.get("retrieved_chunks", [])[:top_n]),
+            "context": context,
+            "answer": best["answer"],
+            "citations": extract_citations(best["answer"]),
+            "candidates": cand_list,
+            "selected_score": best["score"],
+            "gold_docs": r.get("gold_docs", []),
+            "ideal_answer": r.get("ideal_answer", ""),
+        }
+
+    if workers <= 1:
+        out = []
+        for r in tqdm(records, desc="exp3 self_rag"):
+            out.append(process_one(r))
+        return out
+
+    out = [None] * len(records)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut_map = {ex.submit(process_one, r): i for i, r in enumerate(records)}
+        for fut in tqdm(as_completed(fut_map), total=len(fut_map), desc="exp3 self_rag"):
+            out[fut_map[fut]] = fut.result()
     return out
 
 
-def run_naive(records: list[dict], client: OpenAI, model: str, top_n: int, timeout: float, retries: int) -> list[dict]:
-    out = []
-    for r in tqdm(records, desc="exp3 naive"):
+def run_naive(
+    records: list[dict],
+    client: OpenAI,
+    api_key: str,
+    base_url: str,
+    model: str,
+    top_n: int,
+    timeout: float,
+    retries: int,
+    workers: int,
+) -> list[dict]:
+    thread_local = local()
+
+    def get_client() -> OpenAI:
+        if workers <= 1:
+            return client
+        c = getattr(thread_local, "client", None)
+        if c is None:
+            c = OpenAI(api_key=api_key, base_url=base_url or None)
+            thread_local.client = c
+        return c
+
+    def process_one(r: dict) -> dict:
+        c = get_client()
         question = r.get("question", "")
         context = build_context_from_retrieved(r.get("retrieved_chunks", []), top_n=top_n)
         ans = call_chat(
-            client,
+            c,
             model,
             "You are a biomedical QA assistant.",
             build_naive_prompt(question, context),
@@ -270,18 +339,28 @@ def run_naive(records: list[dict], client: OpenAI, model: str, top_n: int, timeo
             timeout=timeout,
             retries=retries,
         )
-        out.append(
-            {
-                "question_id": r.get("question_id"),
-                "question": question,
-                "retrieved_chunks": (r.get("retrieved_chunks", [])[:top_n]),
-                "context": context,
-                "answer": ans,
-                "citations": extract_citations(ans),
-                "gold_docs": r.get("gold_docs", []),
-                "ideal_answer": r.get("ideal_answer", ""),
-            }
-        )
+        return {
+            "question_id": r.get("question_id"),
+            "question": question,
+            "retrieved_chunks": (r.get("retrieved_chunks", [])[:top_n]),
+            "context": context,
+            "answer": ans,
+            "citations": extract_citations(ans),
+            "gold_docs": r.get("gold_docs", []),
+            "ideal_answer": r.get("ideal_answer", ""),
+        }
+
+    if workers <= 1:
+        out = []
+        for r in tqdm(records, desc="exp3 naive"):
+            out.append(process_one(r))
+        return out
+
+    out = [None] * len(records)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut_map = {ex.submit(process_one, r): i for i, r in enumerate(records)}
+        for fut in tqdm(as_completed(fut_map), total=len(fut_map), desc="exp3 naive"):
+            out[fut_map[fut]] = fut.result()
     return out
 
 
@@ -302,6 +381,7 @@ def main() -> None:
     parser.add_argument("--max_tokens_answer", type=int, default=240)
     parser.add_argument("--request_timeout", type=float, default=120.0)
     parser.add_argument("--request_retries", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=4, help="Question-level parallel workers for Experiment 3.")
     args = parser.parse_args()
 
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -316,11 +396,23 @@ def main() -> None:
 
     client = OpenAI(api_key=api_key, base_url=args.base_url or None)
 
-    naive = run_naive(src, client, args.model, args.top_n, args.request_timeout, args.request_retries)
+    naive = run_naive(
+        src,
+        client,
+        api_key=api_key,
+        base_url=args.base_url,
+        model=args.model,
+        top_n=args.top_n,
+        timeout=args.request_timeout,
+        retries=args.request_retries,
+        workers=args.workers,
+    )
     wo = run_selfrag_variant(
         src,
         client,
-        args.model,
+        api_key=api_key,
+        base_url=args.base_url,
+        model=args.model,
         top_n=args.top_n,
         num_candidates=args.num_candidates,
         theta=args.theta,
@@ -331,11 +423,14 @@ def main() -> None:
         max_tokens_answer=args.max_tokens_answer,
         timeout=args.request_timeout,
         retries=args.request_retries,
+        workers=args.workers,
     )
     full = run_selfrag_variant(
         src,
         client,
-        args.model,
+        api_key=api_key,
+        base_url=args.base_url,
+        model=args.model,
         top_n=args.top_n,
         num_candidates=args.num_candidates,
         theta=args.theta,
@@ -346,6 +441,7 @@ def main() -> None:
         max_tokens_answer=args.max_tokens_answer,
         timeout=args.request_timeout,
         retries=args.request_retries,
+        workers=args.workers,
     )
 
     p1 = os.path.join(args.out_root, "naive_rag", "predictions.jsonl")

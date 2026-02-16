@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--max_tokens_answer", type=int, default=240)
     parser.add_argument("--request_timeout", type=float, default=120.0)
     parser.add_argument("--request_retries", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--correctness_threshold", type=float, default=0.20)
     parser.add_argument("--summary_out", default="runs/exp3/metrics_summary.json")
     parser.add_argument("--plot_metrics_out", default="plots/exp3_quality_metrics.png")
@@ -69,6 +70,8 @@ def main() -> None:
             str(args.request_timeout),
             "--request_retries",
             str(args.request_retries),
+            "--workers",
+            str(args.workers),
         ],
         env,
     )

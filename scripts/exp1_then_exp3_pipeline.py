@@ -14,17 +14,21 @@ def main() -> None:
     parser.add_argument("--input", default="data/BioASQ/trainining14b.json")
     parser.add_argument("--llm_model", default=os.environ.get("OPENAI_MODEL", "").strip())
     parser.add_argument("--base_url", default=os.environ.get("OPENAI_BASE_URL", "").strip())
-    parser.add_argument("--max_questions", type=int, default=0)
+    parser.add_argument("--max_questions", type=int, default=0, help="Experiment 1 question cap. 0 means all.")
+    parser.add_argument("--exp3_max_questions", type=int, default=200, help="Experiment 3 question cap.")
     parser.add_argument("--top_k", type=int, default=20)
     parser.add_argument("--top_n", type=int, default=3)
     parser.add_argument("--alpha", type=float, default=0.7)
     parser.add_argument("--dense_model", default="sentence-transformers/all-MiniLM-L6-v2")
     parser.add_argument("--rerank_model", default="cross-encoder/ms-marco-MiniLM-L-6-v2")
+    parser.add_argument("--exp1_workers", type=int, default=4)
     parser.add_argument("--exp3_num_candidates", type=int, default=3)
+    parser.add_argument("--exp3_workers", type=int, default=4)
     parser.add_argument("--exp3_theta", type=float, default=1.0)
     parser.add_argument("--exp3_w_rel", type=float, default=1.0)
     parser.add_argument("--exp3_w_sup", type=float, default=2.0)
     parser.add_argument("--exp3_w_use", type=float, default=1.0)
+    parser.add_argument("--exp1_resume_completed", action="store_true")
     args = parser.parse_args()
 
     env = os.environ.copy()
@@ -33,31 +37,33 @@ def main() -> None:
     if not args.llm_model:
         raise RuntimeError("Missing --llm_model (or OPENAI_MODEL env).")
 
-    run_step(
-        [
-            sys.executable,
-            "scripts/exp1_run_pipeline.py",
-            "--input",
-            args.input,
-            "--llm_model",
-            args.llm_model,
-            "--base_url",
-            args.base_url,
-            "--max_questions",
-            str(args.max_questions),
-            "--top_k",
-            str(args.top_k),
-            "--top_n",
-            str(args.top_n),
-            "--alpha",
-            str(args.alpha),
-            "--dense_model",
-            args.dense_model,
-            "--rerank_model",
-            args.rerank_model,
-        ],
-        env,
-    )
+    exp1_cmd = [
+        sys.executable,
+        "scripts/exp1_run_pipeline.py",
+        "--input",
+        args.input,
+        "--llm_model",
+        args.llm_model,
+        "--base_url",
+        args.base_url,
+        "--max_questions",
+        str(args.max_questions),
+        "--top_k",
+        str(args.top_k),
+        "--top_n",
+        str(args.top_n),
+        "--alpha",
+        str(args.alpha),
+        "--dense_model",
+        args.dense_model,
+        "--rerank_model",
+        args.rerank_model,
+        "--workers",
+        str(args.exp1_workers),
+    ]
+    if args.exp1_resume_completed:
+        exp1_cmd.append("--resume_completed")
+    run_step(exp1_cmd, env)
 
     run_step(
         [
@@ -73,6 +79,8 @@ def main() -> None:
             str(args.top_n),
             "--num_candidates",
             str(args.exp3_num_candidates),
+            "--workers",
+            str(args.exp3_workers),
             "--theta",
             str(args.exp3_theta),
             "--w_rel",
@@ -82,7 +90,7 @@ def main() -> None:
             "--w_use",
             str(args.exp3_w_use),
             "--max_questions",
-            str(args.max_questions),
+            str(args.exp3_max_questions),
         ],
         env,
     )

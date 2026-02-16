@@ -3,7 +3,9 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from threading import local
 
 import numpy as np
 from dotenv import load_dotenv
@@ -210,15 +212,27 @@ def run_strategy(
     top_k: int,
     top_n: int,
     alpha: float,
-    client: OpenAI | None,
+    api_key: str,
+    base_url: str,
     llm_model: str,
     skip_generation: bool,
     max_gen_tokens: int,
     req_timeout: float,
     req_retries: int,
+    workers: int,
 ) -> list[dict]:
-    records = []
-    for q in tqdm(qa_rows, desc=f"exp1 {strategy}"):
+    thread_local = local()
+
+    def get_client() -> OpenAI | None:
+        if skip_generation:
+            return None
+        c = getattr(thread_local, "client", None)
+        if c is None:
+            c = OpenAI(api_key=api_key, base_url=base_url or None)
+            thread_local.client = c
+        return c
+
+    def process_one(q: dict) -> dict:
         question = q["question"]
         t0 = time.perf_counter()
         if strategy == "sparse_only":
@@ -240,38 +254,48 @@ def run_strategy(
         answer = ""
         gen_ms = 0.0
         if not skip_generation:
-            if client is None:
-                raise RuntimeError("Generation requested but OpenAI client is unavailable.")
+            client = get_client()
             p = build_prompt(question, context)
             tg = time.perf_counter()
             answer = call_llm(client, llm_model, p, max_gen_tokens, req_timeout, req_retries)
             gen_ms = (time.perf_counter() - tg) * 1000.0
 
         citations = extract_citations(answer)
-        records.append(
-            {
-                "question_id": q["question_id"],
-                "question": question,
-                "strategy": strategy,
-                "retrieved_chunks": [
-                    {
-                        "doc_id": corpus[i]["doc_id"],
-                        "chunk_id": corpus[i]["chunk_id"],
-                        "score": float(scores[j]) if j < len(scores) else 0.0,
-                        "text": corpus[i]["text"],
-                    }
-                    for j, i in enumerate(idx)
-                ],
-                "context": context,
-                "answer": answer,
-                "citations": citations,
-                "latency_ms": float(retrieval_ms + gen_ms),
-                "retrieval_latency_ms": float(retrieval_ms),
-                "generation_latency_ms": float(gen_ms),
-                "gold_docs": q.get("gold_docs", []),
-                "ideal_answer": q.get("ideal_answer", ""),
-            }
-        )
+        return {
+            "question_id": q["question_id"],
+            "question": question,
+            "strategy": strategy,
+            "retrieved_chunks": [
+                {
+                    "doc_id": corpus[i]["doc_id"],
+                    "chunk_id": corpus[i]["chunk_id"],
+                    "score": float(scores[j]) if j < len(scores) else 0.0,
+                    "text": corpus[i]["text"],
+                }
+                for j, i in enumerate(idx)
+            ],
+            "context": context,
+            "answer": answer,
+            "citations": citations,
+            "latency_ms": float(retrieval_ms + gen_ms),
+            "retrieval_latency_ms": float(retrieval_ms),
+            "generation_latency_ms": float(gen_ms),
+            "gold_docs": q.get("gold_docs", []),
+            "ideal_answer": q.get("ideal_answer", ""),
+        }
+
+    if workers <= 1:
+        records = []
+        for q in tqdm(qa_rows, desc=f"exp1 {strategy}"):
+            records.append(process_one(q))
+        return records
+
+    records = [None] * len(qa_rows)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(process_one, q): i for i, q in enumerate(qa_rows)}
+        for fut in tqdm(as_completed(futures), total=len(futures), desc=f"exp1 {strategy}"):
+            idx = futures[fut]
+            records[idx] = fut.result()
     return records
 
 
@@ -301,6 +325,7 @@ def main() -> None:
     parser.add_argument("--max_gen_tokens", type=int, default=260)
     parser.add_argument("--request_timeout", type=float, default=120.0)
     parser.add_argument("--request_retries", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=4, help="Question-level parallel workers per strategy.")
     args = parser.parse_args()
 
     corpus = read_jsonl(args.corpus)
@@ -310,14 +335,13 @@ def main() -> None:
 
     artifacts = build_artifacts(corpus, args.dense_model, args.rerank_model)
 
-    client = None
+    api_key = ""
     if not args.skip_generation:
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("Missing OPENAI_API_KEY for generation. Use --skip_generation to run retrieval only.")
         if not args.llm_model:
             raise RuntimeError("Missing --llm_model (or OPENAI_MODEL env) for generation.")
-        client = OpenAI(api_key=api_key, base_url=args.base_url or None)
 
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
     for s in strategies:
@@ -329,12 +353,14 @@ def main() -> None:
             top_k=args.top_k,
             top_n=args.top_n,
             alpha=args.alpha,
-            client=client,
+            api_key=api_key,
+            base_url=args.base_url,
             llm_model=args.llm_model,
             skip_generation=args.skip_generation,
             max_gen_tokens=args.max_gen_tokens,
             req_timeout=args.request_timeout,
             req_retries=args.request_retries,
+            workers=args.workers,
         )
         out_path = os.path.join(args.out_dir, s, "predictions.jsonl")
         write_jsonl(out_path, rows)

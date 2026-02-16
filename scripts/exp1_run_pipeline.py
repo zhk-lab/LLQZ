@@ -9,6 +9,17 @@ def run_step(cmd: list[str], env: dict[str, str]) -> None:
     subprocess.run(cmd, check=True, env=env)
 
 
+def count_jsonl_lines(path: str) -> int:
+    if not os.path.exists(path):
+        return 0
+    n = 0
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                n += 1
+    return n
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Experiment 1 pipeline end-to-end.")
     parser.add_argument("--input", default="data/BioASQ/trainining14b.json")
@@ -28,6 +39,12 @@ def main() -> None:
     parser.add_argument("--max_gen_tokens", type=int, default=260)
     parser.add_argument("--request_timeout", type=float, default=120.0)
     parser.add_argument("--request_retries", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--resume_completed",
+        action="store_true",
+        help="Skip strategies whose predictions.jsonl already has target question count.",
+    )
     parser.add_argument("--metrics_out", default="runs/exp1/metrics_summary.json")
     parser.add_argument("--plot_metrics_out", default="plots/exp1_retrieval_metrics.png")
     parser.add_argument("--plot_cost_out", default="plots/exp1_effect_vs_cost.png")
@@ -53,6 +70,19 @@ def main() -> None:
         env,
     )
 
+    target_questions = count_jsonl_lines(args.qa_out)
+    strategy_list = [s.strip() for s in args.strategies.split(",") if s.strip()]
+    if args.resume_completed:
+        pending = []
+        for s in strategy_list:
+            pred_path = os.path.join(args.pred_root, s, "predictions.jsonl")
+            done_n = count_jsonl_lines(pred_path)
+            if done_n >= target_questions > 0:
+                print(f"[exp1] skip completed strategy: {s} ({done_n}/{target_questions})")
+            else:
+                pending.append(s)
+        strategy_list = pending
+
     run_cmd = [
         sys.executable,
         "scripts/exp1_run_retrieval_qa.py",
@@ -63,7 +93,7 @@ def main() -> None:
         "--out_dir",
         args.pred_root,
         "--strategies",
-        args.strategies,
+        ",".join(strategy_list),
         "--top_k",
         str(args.top_k),
         "--top_n",
@@ -82,12 +112,17 @@ def main() -> None:
         str(args.request_timeout),
         "--request_retries",
         str(args.request_retries),
+        "--workers",
+        str(args.workers),
     ]
-    if args.skip_generation:
-        run_cmd.append("--skip_generation")
+    if strategy_list:
+        if args.skip_generation:
+            run_cmd.append("--skip_generation")
+        else:
+            run_cmd.extend(["--llm_model", args.llm_model, "--base_url", args.base_url])
+        run_step(run_cmd, env)
     else:
-        run_cmd.extend(["--llm_model", args.llm_model, "--base_url", args.base_url])
-    run_step(run_cmd, env)
+        print("[exp1] all strategies already completed. Skip retrieval+generation stage.")
 
     eval_cmd = [
         sys.executable,
