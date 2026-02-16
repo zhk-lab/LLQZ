@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.stats import binomtest
 
 
 BAR_COLORS = ["#C9D4E5", "#95ACC9", "#4A6E9E"]
@@ -91,9 +92,18 @@ def eval_one(rows: list[dict], correctness_threshold: float) -> tuple[dict, dict
 def correction_stats(naive: dict, other: dict) -> dict:
     ids = sorted(set(naive.keys()) & set(other.keys()))
     if not ids:
-        return {"fix_rate": 0.0, "introduce_rate": 0.0, "delta_correct_rate": 0.0}
+        return {
+            "fix_rate": 0.0,
+            "introduce_rate": 0.0,
+            "delta_correct_rate": 0.0,
+            "n_fix": 0,
+            "n_introduce": 0,
+            "n_discordant": 0,
+            "paired_sign_pvalue": 1.0,
+        }
     fix = intro = 0
     n0 = 0
+    n1 = 0
     for qid in ids:
         a = naive[qid]
         b = other[qid]
@@ -101,12 +111,22 @@ def correction_stats(naive: dict, other: dict) -> dict:
             n0 += 1
             if b == 1:
                 fix += 1
-        if a == 1 and b == 0:
-            intro += 1
+        if a == 1:
+            n1 += 1
+            if b == 0:
+                intro += 1
+    discordant = fix + intro
+    pval = 1.0
+    if discordant > 0:
+        pval = float(binomtest(k=fix, n=discordant, p=0.5, alternative="two-sided").pvalue)
     return {
         "fix_rate": fix / max(1, n0),
-        "introduce_rate": intro / max(1, sum(naive[q] == 1 for q in ids)),
+        "introduce_rate": intro / max(1, n1),
         "delta_correct_rate": float(np.mean([other[q] for q in ids]) - np.mean([naive[q] for q in ids])),
+        "n_fix": int(fix),
+        "n_introduce": int(intro),
+        "n_discordant": int(discordant),
+        "paired_sign_pvalue": pval,
     }
 
 

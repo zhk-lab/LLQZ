@@ -15,17 +15,24 @@ def main() -> None:
     parser.add_argument("--out_root", default="runs/exp3")
     parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL", "").strip())
     parser.add_argument("--base_url", default=os.environ.get("OPENAI_BASE_URL", "").strip())
-    parser.add_argument("--top_n", type=int, default=3)
-    parser.add_argument("--num_candidates", type=int, default=3)
-    parser.add_argument("--theta", type=float, default=1.0)
+    parser.add_argument("--top_n", type=int, default=5)
+    parser.add_argument("--num_candidates", type=int, default=8)
+    parser.add_argument("--theta", type=float, default=1.2)
     parser.add_argument("--w_rel", type=float, default=1.0)
-    parser.add_argument("--w_sup", type=float, default=2.0)
+    parser.add_argument("--w_sup", type=float, default=3.0)
     parser.add_argument("--w_use", type=float, default=1.0)
     parser.add_argument("--max_questions", type=int, default=0)
     parser.add_argument("--max_tokens_answer", type=int, default=240)
     parser.add_argument("--request_timeout", type=float, default=120.0)
     parser.add_argument("--request_retries", type=int, default=3)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--candidate_temperature", type=float, default=0.9)
+    parser.add_argument("--candidate_top_p", type=float, default=0.95)
+    parser.add_argument("--min_rel_prob", type=float, default=0.55)
+    parser.add_argument("--min_sup_prob", type=float, default=0.65)
+    parser.add_argument("--min_use_prob", type=float, default=0.50)
+    parser.add_argument("--citation_bonus", type=float, default=0.20)
+    parser.add_argument("--unsafe_penalty", type=float, default=0.55)
     parser.add_argument("--correctness_threshold", type=float, default=0.20)
     parser.add_argument("--summary_out", default="runs/exp3/metrics_summary.json")
     parser.add_argument("--plot_metrics_out", default="plots/exp3_quality_metrics.png")
@@ -72,6 +79,20 @@ def main() -> None:
             str(args.request_retries),
             "--workers",
             str(args.workers),
+            "--candidate_temperature",
+            str(args.candidate_temperature),
+            "--candidate_top_p",
+            str(args.candidate_top_p),
+            "--min_rel_prob",
+            str(args.min_rel_prob),
+            "--min_sup_prob",
+            str(args.min_sup_prob),
+            "--min_use_prob",
+            str(args.min_use_prob),
+            "--citation_bonus",
+            str(args.citation_bonus),
+            "--unsafe_penalty",
+            str(args.unsafe_penalty),
         ],
         env,
     )

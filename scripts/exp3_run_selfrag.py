@@ -196,6 +196,13 @@ def score_candidate(base_prob: float, critic: dict, theta: float, w_rel: float, 
     return float(base_prob + theta * (w_rel * rel + w_sup * sup + w_use * use))
 
 
+def candidate_is_safe(critic: dict, min_rel_prob: float, min_sup_prob: float, min_use_prob: float) -> bool:
+    rel = clamp01(critic.get("rel_prob", 0.5))
+    sup = clamp01(critic.get("sup_prob", 0.5))
+    use = clamp01(critic.get("use_prob", critic.get("use_score", 3) / 5.0))
+    return rel >= min_rel_prob and sup >= min_sup_prob and use >= min_use_prob
+
+
 def run_selfrag_variant(
     records: list[dict],
     client: OpenAI,
@@ -213,6 +220,13 @@ def run_selfrag_variant(
     timeout: float,
     retries: int,
     workers: int,
+    candidate_temperature: float,
+    candidate_top_p: float,
+    min_rel_prob: float,
+    min_sup_prob: float,
+    min_use_prob: float,
+    citation_bonus: float,
+    unsafe_penalty: float,
 ) -> list[dict]:
     thread_local = local()
 
@@ -237,8 +251,8 @@ def run_selfrag_variant(
                 model,
                 "You produce strict JSON.",
                 build_candidate_prompt(question, context),
-                temperature=0.7,
-                top_p=0.95,
+                temperature=candidate_temperature,
+                top_p=candidate_top_p,
                 max_tokens=max_tokens_answer,
                 timeout=timeout,
                 retries=retries,
@@ -265,16 +279,44 @@ def run_selfrag_variant(
                 w_sup=0.0 if no_reflection_weight else w_sup,
                 w_use=0.0 if no_reflection_weight else w_use,
             )
+            has_cit = int(len(extract_citations(answer)) > 0)
+            is_safe = candidate_is_safe(
+                critic=critic,
+                min_rel_prob=min_rel_prob,
+                min_sup_prob=min_sup_prob,
+                min_use_prob=min_use_prob,
+            )
+            if not no_reflection_weight:
+                score += citation_bonus * has_cit
+                if not is_safe:
+                    score -= unsafe_penalty
             cand_list.append(
                 {
                     "answer": answer,
                     "base_prob": base_prob,
                     "critic": critic,
                     "score": score,
+                    "safe": is_safe,
+                    "has_citation": has_cit,
                 }
             )
 
-        best = sorted(cand_list, key=lambda x: -x["score"])[0]
+        if no_reflection_weight:
+            best = sorted(cand_list, key=lambda x: -x["score"])[0]
+        else:
+            safe = [x for x in cand_list if x.get("safe")]
+            if safe:
+                best = sorted(safe, key=lambda x: -x["score"])[0]
+            else:
+                # Conservative fallback: prioritize support to reduce "correct->wrong" flips.
+                best = sorted(
+                    cand_list,
+                    key=lambda x: (
+                        -clamp01(x["critic"].get("sup_prob", 0.5)),
+                        -clamp01(x["critic"].get("rel_prob", 0.5)),
+                        -x["score"],
+                    ),
+                )[0]
         return {
             "question_id": qid,
             "question": question,
@@ -371,17 +413,24 @@ def main() -> None:
     parser.add_argument("--out_root", default="runs/exp3")
     parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL", "").strip())
     parser.add_argument("--base_url", default=os.environ.get("OPENAI_BASE_URL", "").strip())
-    parser.add_argument("--top_n", type=int, default=3)
-    parser.add_argument("--num_candidates", type=int, default=3)
-    parser.add_argument("--theta", type=float, default=1.0)
+    parser.add_argument("--top_n", type=int, default=5)
+    parser.add_argument("--num_candidates", type=int, default=8)
+    parser.add_argument("--theta", type=float, default=1.2)
     parser.add_argument("--w_rel", type=float, default=1.0)
-    parser.add_argument("--w_sup", type=float, default=2.0)
+    parser.add_argument("--w_sup", type=float, default=3.0)
     parser.add_argument("--w_use", type=float, default=1.0)
     parser.add_argument("--max_questions", type=int, default=0)
     parser.add_argument("--max_tokens_answer", type=int, default=240)
     parser.add_argument("--request_timeout", type=float, default=120.0)
     parser.add_argument("--request_retries", type=int, default=3)
     parser.add_argument("--workers", type=int, default=4, help="Question-level parallel workers for Experiment 3.")
+    parser.add_argument("--candidate_temperature", type=float, default=0.9)
+    parser.add_argument("--candidate_top_p", type=float, default=0.95)
+    parser.add_argument("--min_rel_prob", type=float, default=0.55)
+    parser.add_argument("--min_sup_prob", type=float, default=0.65)
+    parser.add_argument("--min_use_prob", type=float, default=0.50)
+    parser.add_argument("--citation_bonus", type=float, default=0.20)
+    parser.add_argument("--unsafe_penalty", type=float, default=0.55)
     args = parser.parse_args()
 
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -424,6 +473,13 @@ def main() -> None:
         timeout=args.request_timeout,
         retries=args.request_retries,
         workers=args.workers,
+        candidate_temperature=args.candidate_temperature,
+        candidate_top_p=args.candidate_top_p,
+        min_rel_prob=args.min_rel_prob,
+        min_sup_prob=args.min_sup_prob,
+        min_use_prob=args.min_use_prob,
+        citation_bonus=args.citation_bonus,
+        unsafe_penalty=args.unsafe_penalty,
     )
     full = run_selfrag_variant(
         src,
@@ -442,6 +498,13 @@ def main() -> None:
         timeout=args.request_timeout,
         retries=args.request_retries,
         workers=args.workers,
+        candidate_temperature=args.candidate_temperature,
+        candidate_top_p=args.candidate_top_p,
+        min_rel_prob=args.min_rel_prob,
+        min_sup_prob=args.min_sup_prob,
+        min_use_prob=args.min_use_prob,
+        citation_bonus=args.citation_bonus,
+        unsafe_penalty=args.unsafe_penalty,
     )
 
     p1 = os.path.join(args.out_root, "naive_rag", "predictions.jsonl")
