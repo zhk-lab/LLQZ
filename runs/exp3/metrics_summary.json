@@ -27,12 +27,20 @@
     "wo_weight_vs_naive": {
       "fix_rate": 0.04807692307692308,
       "introduce_rate": 0.0625,
-      "delta_correct_rate": -0.0050000000000000044
+      "delta_correct_rate": -0.0050000000000000044,
+      "n_fix": 5,
+      "n_introduce": 6,
+      "n_discordant": 11,
+      "paired_sign_pvalue": 1.0
     },
     "full_vs_naive": {
       "fix_rate": 0.08653846153846154,
       "introduce_rate": 0.10416666666666667,
-      "delta_correct_rate": -0.0050000000000000044
+      "delta_correct_rate": -0.0050000000000000044,
+      "n_fix": 9,
+      "n_introduce": 10,
+      "n_discordant": 19,
+      "paired_sign_pvalue": 1.0
     }
   }
 }

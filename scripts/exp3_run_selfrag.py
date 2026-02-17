@@ -38,6 +38,26 @@ def write_jsonl(path: str, rows: list[dict]) -> None:
             w.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def load_existing_rows(path: str) -> list[dict]:
+    if not os.path.exists(path):
+        return []
+    return read_jsonl(path)
+
+
+def merge_by_qid(existing: list[dict], new_rows: list[dict]) -> list[dict]:
+    merged = {}
+    for r in existing:
+        merged[str(r.get("question_id"))] = r
+    for r in new_rows:
+        merged[str(r.get("question_id"))] = r
+    return list(merged.values())
+
+
+def checkpoint_write(path: str, existing: list[dict], staged: list[dict]) -> None:
+    merged = merge_by_qid(existing, staged)
+    write_jsonl(path, merged)
+
+
 def normalize_text(text: str) -> str:
     return " ".join(str(text or "").split()).strip()
 
@@ -227,6 +247,9 @@ def run_selfrag_variant(
     min_use_prob: float,
     citation_bonus: float,
     unsafe_penalty: float,
+    checkpoint_path: str = "",
+    checkpoint_existing: list[dict] | None = None,
+    flush_every: int = 20,
 ) -> list[dict]:
     thread_local = local()
 
@@ -334,13 +357,20 @@ def run_selfrag_variant(
         out = []
         for r in tqdm(records, desc="exp3 self_rag"):
             out.append(process_one(r))
+            if checkpoint_path and flush_every > 0 and len(out) % flush_every == 0:
+                checkpoint_write(checkpoint_path, checkpoint_existing or [], out)
         return out
 
     out = [None] * len(records)
+    done = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
         fut_map = {ex.submit(process_one, r): i for i, r in enumerate(records)}
         for fut in tqdm(as_completed(fut_map), total=len(fut_map), desc="exp3 self_rag"):
-            out[fut_map[fut]] = fut.result()
+            row = fut.result()
+            out[fut_map[fut]] = row
+            done.append(row)
+            if checkpoint_path and flush_every > 0 and len(done) % flush_every == 0:
+                checkpoint_write(checkpoint_path, checkpoint_existing or [], done)
     return out
 
 
@@ -354,6 +384,9 @@ def run_naive(
     timeout: float,
     retries: int,
     workers: int,
+    checkpoint_path: str = "",
+    checkpoint_existing: list[dict] | None = None,
+    flush_every: int = 20,
 ) -> list[dict]:
     thread_local = local()
 
@@ -396,13 +429,20 @@ def run_naive(
         out = []
         for r in tqdm(records, desc="exp3 naive"):
             out.append(process_one(r))
+            if checkpoint_path and flush_every > 0 and len(out) % flush_every == 0:
+                checkpoint_write(checkpoint_path, checkpoint_existing or [], out)
         return out
 
     out = [None] * len(records)
+    done = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
         fut_map = {ex.submit(process_one, r): i for i, r in enumerate(records)}
         for fut in tqdm(as_completed(fut_map), total=len(fut_map), desc="exp3 naive"):
-            out[fut_map[fut]] = fut.result()
+            row = fut.result()
+            out[fut_map[fut]] = row
+            done.append(row)
+            if checkpoint_path and flush_every > 0 and len(done) % flush_every == 0:
+                checkpoint_write(checkpoint_path, checkpoint_existing or [], done)
     return out
 
 
@@ -431,6 +471,8 @@ def main() -> None:
     parser.add_argument("--min_use_prob", type=float, default=0.50)
     parser.add_argument("--citation_bonus", type=float, default=0.20)
     parser.add_argument("--unsafe_penalty", type=float, default=0.55)
+    parser.add_argument("--resume", action="store_true", help="Resume from existing outputs and skip completed question_ids.")
+    parser.add_argument("--flush_every", type=int, default=20, help="Checkpoint frequency (questions).")
     args = parser.parse_args()
 
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -445,8 +487,18 @@ def main() -> None:
 
     client = OpenAI(api_key=api_key, base_url=args.base_url or None)
 
-    naive = run_naive(
-        src,
+    p1 = os.path.join(args.out_root, "naive_rag", "predictions.jsonl")
+    p2 = os.path.join(args.out_root, "self_rag_wo_weight", "predictions.jsonl")
+    p3 = os.path.join(args.out_root, "self_rag_full", "predictions.jsonl")
+
+    existing_naive = load_existing_rows(p1) if args.resume else []
+    done_naive = {str(r.get("question_id")) for r in existing_naive}
+    todo_naive = [r for r in src if str(r.get("question_id")) not in done_naive]
+    if existing_naive and args.resume:
+        print(f"[resume] naive_rag: skip {len(existing_naive)} done, run {len(todo_naive)} pending")
+
+    naive_new = run_naive(
+        todo_naive,
         client,
         api_key=api_key,
         base_url=args.base_url,
@@ -455,9 +507,21 @@ def main() -> None:
         timeout=args.request_timeout,
         retries=args.request_retries,
         workers=args.workers,
+        checkpoint_path=p1,
+        checkpoint_existing=existing_naive,
+        flush_every=args.flush_every,
     )
-    wo = run_selfrag_variant(
-        src,
+    naive = merge_by_qid(existing_naive, naive_new)
+    write_jsonl(p1, naive)
+
+    existing_wo = load_existing_rows(p2) if args.resume else []
+    done_wo = {str(r.get("question_id")) for r in existing_wo}
+    todo_wo = [r for r in src if str(r.get("question_id")) not in done_wo]
+    if existing_wo and args.resume:
+        print(f"[resume] self_rag_wo_weight: skip {len(existing_wo)} done, run {len(todo_wo)} pending")
+
+    wo_new = run_selfrag_variant(
+        todo_wo,
         client,
         api_key=api_key,
         base_url=args.base_url,
@@ -480,9 +544,21 @@ def main() -> None:
         min_use_prob=args.min_use_prob,
         citation_bonus=args.citation_bonus,
         unsafe_penalty=args.unsafe_penalty,
+        checkpoint_path=p2,
+        checkpoint_existing=existing_wo,
+        flush_every=args.flush_every,
     )
-    full = run_selfrag_variant(
-        src,
+    wo = merge_by_qid(existing_wo, wo_new)
+    write_jsonl(p2, wo)
+
+    existing_full = load_existing_rows(p3) if args.resume else []
+    done_full = {str(r.get("question_id")) for r in existing_full}
+    todo_full = [r for r in src if str(r.get("question_id")) not in done_full]
+    if existing_full and args.resume:
+        print(f"[resume] self_rag_full: skip {len(existing_full)} done, run {len(todo_full)} pending")
+
+    full_new = run_selfrag_variant(
+        todo_full,
         client,
         api_key=api_key,
         base_url=args.base_url,
@@ -505,13 +581,11 @@ def main() -> None:
         min_use_prob=args.min_use_prob,
         citation_bonus=args.citation_bonus,
         unsafe_penalty=args.unsafe_penalty,
+        checkpoint_path=p3,
+        checkpoint_existing=existing_full,
+        flush_every=args.flush_every,
     )
-
-    p1 = os.path.join(args.out_root, "naive_rag", "predictions.jsonl")
-    p2 = os.path.join(args.out_root, "self_rag_wo_weight", "predictions.jsonl")
-    p3 = os.path.join(args.out_root, "self_rag_full", "predictions.jsonl")
-    write_jsonl(p1, naive)
-    write_jsonl(p2, wo)
+    full = merge_by_qid(existing_full, full_new)
     write_jsonl(p3, full)
     print(json.dumps({"status": "ok", "naive": p1, "wo_weight": p2, "full": p3}, ensure_ascii=False, indent=2))
 

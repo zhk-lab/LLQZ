@@ -33,6 +33,8 @@ def main() -> None:
     parser.add_argument("--min_use_prob", type=float, default=0.50)
     parser.add_argument("--citation_bonus", type=float, default=0.20)
     parser.add_argument("--unsafe_penalty", type=float, default=0.55)
+    parser.add_argument("--resume", action="store_true", help="Resume from existing exp3 outputs.")
+    parser.add_argument("--flush_every", type=int, default=20, help="Checkpoint frequency during exp3 generation.")
     parser.add_argument("--correctness_threshold", type=float, default=0.20)
     parser.add_argument("--summary_out", default="runs/exp3/metrics_summary.json")
     parser.add_argument("--plot_metrics_out", default="plots/exp3_quality_metrics.png")
@@ -45,57 +47,59 @@ def main() -> None:
     if not args.model:
         raise RuntimeError("Missing --model (or OPENAI_MODEL env).")
 
-    run_step(
-        [
-            sys.executable,
-            "scripts/exp3_run_selfrag.py",
-            "--retrieval_source",
-            args.retrieval_source,
-            "--out_root",
-            args.out_root,
-            "--model",
-            args.model,
-            "--base_url",
-            args.base_url,
-            "--top_n",
-            str(args.top_n),
-            "--num_candidates",
-            str(args.num_candidates),
-            "--theta",
-            str(args.theta),
-            "--w_rel",
-            str(args.w_rel),
-            "--w_sup",
-            str(args.w_sup),
-            "--w_use",
-            str(args.w_use),
-            "--max_questions",
-            str(args.max_questions),
-            "--max_tokens_answer",
-            str(args.max_tokens_answer),
-            "--request_timeout",
-            str(args.request_timeout),
-            "--request_retries",
-            str(args.request_retries),
-            "--workers",
-            str(args.workers),
-            "--candidate_temperature",
-            str(args.candidate_temperature),
-            "--candidate_top_p",
-            str(args.candidate_top_p),
-            "--min_rel_prob",
-            str(args.min_rel_prob),
-            "--min_sup_prob",
-            str(args.min_sup_prob),
-            "--min_use_prob",
-            str(args.min_use_prob),
-            "--citation_bonus",
-            str(args.citation_bonus),
-            "--unsafe_penalty",
-            str(args.unsafe_penalty),
-        ],
-        env,
-    )
+    run_cmd = [
+        sys.executable,
+        "scripts/exp3_run_selfrag.py",
+        "--retrieval_source",
+        args.retrieval_source,
+        "--out_root",
+        args.out_root,
+        "--model",
+        args.model,
+        "--base_url",
+        args.base_url,
+        "--top_n",
+        str(args.top_n),
+        "--num_candidates",
+        str(args.num_candidates),
+        "--theta",
+        str(args.theta),
+        "--w_rel",
+        str(args.w_rel),
+        "--w_sup",
+        str(args.w_sup),
+        "--w_use",
+        str(args.w_use),
+        "--max_questions",
+        str(args.max_questions),
+        "--max_tokens_answer",
+        str(args.max_tokens_answer),
+        "--request_timeout",
+        str(args.request_timeout),
+        "--request_retries",
+        str(args.request_retries),
+        "--workers",
+        str(args.workers),
+        "--candidate_temperature",
+        str(args.candidate_temperature),
+        "--candidate_top_p",
+        str(args.candidate_top_p),
+        "--min_rel_prob",
+        str(args.min_rel_prob),
+        "--min_sup_prob",
+        str(args.min_sup_prob),
+        "--min_use_prob",
+        str(args.min_use_prob),
+        "--citation_bonus",
+        str(args.citation_bonus),
+        "--unsafe_penalty",
+        str(args.unsafe_penalty),
+        "--flush_every",
+        str(args.flush_every),
+    ]
+    if args.resume:
+        run_cmd.append("--resume")
+    run_step(run_cmd, env)
 
     run_step(
         [
